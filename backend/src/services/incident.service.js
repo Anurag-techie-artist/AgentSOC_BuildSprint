@@ -1,6 +1,7 @@
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 const eventService = require('./event.service');
+const agentAdapter = require('./agent.adapter');
 const { incidentSchema } = require('../models/schemas');
 
 const ajv = new Ajv({ allErrors: true });
@@ -36,6 +37,65 @@ class IncidentService {
 
     this.incidents.set(incidentData.incident_id, incidentData);
     return incidentData;
+  }
+
+  /**
+   * Run investigation for an existing incident using AgentAdapter.
+   */
+  async investigateIncident(incidentId) {
+    const incident = this.getIncidentById(incidentId);
+    if (!incident) {
+      const error = new Error('Incident not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // Load associated security events from eventService
+    const events = incident.event_ids
+      .map(id => eventService.getEventById(id))
+      .filter(Boolean);
+
+    // Construct AgentInput
+    const agentInput = {
+      incident_id: incident.incident_id,
+      title: incident.title,
+      created_at: incident.created_at,
+      initial_severity: incident.initial_severity,
+      entities: incident.entities,
+      events
+    };
+
+    // Invoke Agent Adapter (which runs Mock Agent / real agent)
+    const agentOutput = await agentAdapter.analyzeIncident(agentInput);
+
+    // Update incident in-memory storage with investigation result
+    incident.investigation_result = agentOutput;
+    incident.status = 'INVESTIGATING';
+    incident.updated_at = new Date().toISOString();
+
+    this.incidents.set(incidentId, incident);
+
+    return agentOutput;
+  }
+
+  /**
+   * Get stored investigation result for an incident.
+   */
+  getInvestigation(incidentId) {
+    const incident = this.getIncidentById(incidentId);
+    if (!incident) {
+      const error = new Error('Incident not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!incident.investigation_result) {
+      const error = new Error('No investigation result found for this incident');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    return incident.investigation_result;
   }
 
   /**

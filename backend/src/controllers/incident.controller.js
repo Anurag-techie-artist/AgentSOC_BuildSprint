@@ -32,3 +32,36 @@ exports.getIncidentById = (req, res, next) => {
     next(error);
   }
 };
+
+exports.investigateIncident = async (req, res, next) => {
+  try {
+    const { incident_id } = req.params;
+    const agentOutput = await incidentService.investigateIncident(incident_id);
+
+    return res.status(200).json({
+      status: 'success',
+      data: agentOutput
+    });
+  } catch (error) {
+    if (error.message && error.message.startsWith('Invalid AgentInput')) {
+      error.statusCode = 400;
+    } else if (error.message && error.message.startsWith('Invalid AgentOutput')) {
+      error.statusCode = 500;
+    }
+    next(error);
+  }
+};
+
+exports.getInvestigation = (req, res, next) => {
+  try {
+    const { incident_id } = req.params;
+    const result = incidentService.getInvestigation(incident_id);
+
+    return res.status(200).json({
+      status: 'success',
+      data: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
