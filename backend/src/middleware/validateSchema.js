@@ -1,5 +1,8 @@
 const Ajv = require('ajv');
+const addFormats = require('ajv-formats');
+
 const ajv = new Ajv({ allErrors: true });
+addFormats(ajv);
 
 const validateSchema = (schema) => {
   return (req, res, next) => {
