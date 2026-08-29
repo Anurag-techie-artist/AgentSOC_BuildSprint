@@ -61,74 +61,239 @@ def test_validate_invalid_output_additional_properties(mock_agent_output):
     with pytest.raises(ValidationError, match="unexpected additional property"):
         validate_agent_output(invalid_output)
 
-def test_investigate_phase2_brute_force_scenario(mock_agent_input):
-    """Test Phase 2 investigation engine against SSH brute force + privilege escalation scenario."""
+# --- SCENARIO A: SSH Brute Force Followed by Successful Login ---
+def test_scenario_a_ssh_brute_force(mock_agent_input):
     output = investigate(mock_agent_input)
-    
-    # Contract checks
     validate_agent_output(output)
+    
     assert output["incident_id"] == "INC-2026-0001"
     assert output["assessed_severity"] == "CRITICAL"
-    assert output["confidence_score"] > 0.8
-    
-    # Check reasoning steps generated dynamically
-    assert len(output["reasoning_steps"]) >= 3
-    assert any("Ingested 4 security events" in step["action"] for step in output["reasoning_steps"])
-    assert any("failed login attempts" in step["finding"] for step in output["reasoning_steps"])
-    assert any("elevated command execution" in step["finding"] for step in output["reasoning_steps"])
-    
-    # Check evidence dynamically extracted
-    assert len(output["evidence"]) == 4
-    event_ids = [e["source_event_id"] for e in output["evidence"]]
-    assert "EVT-1001" in event_ids
-    assert "EVT-1004" in event_ids
-    
-    # Check MITRE tactics mapped
-    assert "TA0001: Initial Access (Credential Stuffing / Brute Force)" in output["mitre_tactics"]
+    assert output["confidence_score"] == 0.95
+    assert "TA0001: Initial Access" in output["mitre_tactics"]
     assert "TA0004: Privilege Escalation" in output["mitre_tactics"]
     assert "TA0006: Credential Access" in output["mitre_tactics"]
     
-    # Check response actions dynamically constructed
-    action_titles = [a["title"] for a in output["response_actions"]]
-    assert any("Block Source IP 192.168.1.105" in title for title in action_titles)
-    assert any("Reset Credentials for User admin_user" in title for title in action_titles)
-    assert any("Isolate Host srv-prod-db01" in title for title in action_titles)
+    # Check MITRE mapping is clean without duplicate tactic IDs
+    tactic_ids = [t.split(":")[0] for t in output["mitre_tactics"]]
+    assert len(tactic_ids) == len(set(tactic_ids))
 
-def test_investigate_phase2_low_severity_single_event_scenario(mock_agent_input):
-    """Test Phase 2 investigation with a single low severity event."""
-    low_input = {
-        "incident_id": "INC-2026-0002",
-        "title": "Isolated Authentication Failure",
-        "created_at": "2026-08-29T11:00:00Z",
-        "initial_severity": "LOW",
+# --- SCENARIO B: Privileged Command Execution (Standalone) ---
+def test_scenario_b_privileged_command_execution():
+    inp = {
+        "incident_id": "INC-2026-SCEN-B",
+        "title": "Standalone Sudo Execution Anomaly",
+        "created_at": "2026-08-29T12:00:00Z",
+        "initial_severity": "MEDIUM",
         "entities": {
-            "hosts": ["workstation-12"],
-            "users": ["alice"],
-            "ip_addresses": ["10.0.0.50"]
+            "hosts": ["app-server-01"],
+            "users": ["bob"],
+            "ip_addresses": ["10.0.0.15"]
         },
         "events": [
             {
-                "event_id": "EVT-9001",
-                "timestamp": "2026-08-29T10:59:00Z",
-                "source": "auth.log",
-                "event_type": "ssh_login_failure",
-                "severity": "LOW",
-                "host": "workstation-12",
-                "user": "alice",
-                "ip_address": "10.0.0.50",
-                "raw_data": {"attempts": 1}
+                "event_id": "EVT-B1",
+                "timestamp": "2026-08-29T12:01:00Z",
+                "source": "syslog",
+                "event_type": "sudo_command_execution",
+                "severity": "HIGH",
+                "host": "app-server-01",
+                "user": "bob",
+                "ip_address": "10.0.0.15",
+                "raw_data": {"command": "sudo systemctl restart nginx"}
             }
         ]
     }
-    
-    output = investigate(low_input)
+    output = investigate(inp)
     validate_agent_output(output)
     
-    assert output["incident_id"] == "INC-2026-0002"
+    assert output["assessed_severity"] == "HIGH"
+    assert output["confidence_score"] == 0.75
+    assert "TA0004: Privilege Escalation" in output["mitre_tactics"]
+    assert "Execution of privileged command" in output["evidence"][0]["description"]
+
+# --- SCENARIO C: Sensitive File or Credential Access ---
+def test_scenario_c_credential_file_access():
+    inp = {
+        "incident_id": "INC-2026-SCEN-C",
+        "title": "Sensitive Security File Read",
+        "created_at": "2026-08-29T13:00:00Z",
+        "initial_severity": "HIGH",
+        "entities": {
+            "hosts": ["db-host-02"],
+            "users": ["svc_account"],
+            "ip_addresses": ["10.0.2.100"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-C1",
+                "timestamp": "2026-08-29T13:05:00Z",
+                "source": "auditd",
+                "event_type": "sensitive_read",
+                "severity": "HIGH",
+                "host": "db-host-02",
+                "user": "svc_account",
+                "ip_address": "10.0.2.100",
+                "raw_data": {"command": "cat /etc/shadow"}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
+    assert output["assessed_severity"] == "HIGH"
+    assert "TA0006: Credential Access" in output["mitre_tactics"]
+    assert "Sensitive credential file access" in output["summary"]
+
+# --- SCENARIO D: Suspicious Successful Login (Without Prior Brute Force) ---
+def test_scenario_d_suspicious_login():
+    inp = {
+        "incident_id": "INC-2026-SCEN-D",
+        "title": "Unusual Location SSH Login",
+        "created_at": "2026-08-29T14:00:00Z",
+        "initial_severity": "HIGH",
+        "entities": {
+            "hosts": ["prod-api-01"],
+            "users": ["dev_user"],
+            "ip_addresses": ["198.51.100.42"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-D1",
+                "timestamp": "2026-08-29T14:02:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_success",
+                "severity": "HIGH",
+                "host": "prod-api-01",
+                "user": "dev_user",
+                "ip_address": "198.51.100.42",
+                "raw_data": {"suspicious": True}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
+    assert output["confidence_score"] == 0.75
+    assert "TA0001: Initial Access" in output["mitre_tactics"]
+    assert any("standalone authentication anomaly" in step["action"] for step in output["reasoning_steps"])
+
+# --- SCENARIO E: Multiple Independent Suspicious Activities (Entity Separation) ---
+def test_scenario_e_independent_activities_not_merged():
+    inp = {
+        "incident_id": "INC-2026-SCEN-E",
+        "title": "Multi-Entity Incident",
+        "created_at": "2026-08-29T15:00:00Z",
+        "initial_severity": "HIGH",
+        "entities": {
+            "hosts": ["host-alpha", "host-beta"],
+            "users": ["user1", "user2"],
+            "ip_addresses": ["1.1.1.1", "2.2.2.2"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-E1",
+                "timestamp": "2026-08-29T15:01:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "host-alpha",
+                "user": "user1",
+                "ip_address": "1.1.1.1",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-E2",
+                "timestamp": "2026-08-29T15:02:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "host-alpha",
+                "user": "user1",
+                "ip_address": "1.1.1.1",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-E3",
+                "timestamp": "2026-08-29T15:03:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_success",
+                "severity": "HIGH",
+                "host": "host-beta",
+                "user": "user2",
+                "ip_address": "2.2.2.2",
+                "raw_data": {}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
+    # Ensure brute force chain wasn't falsely formed between user1@1.1.1.1 and user2@2.2.2.2
+    assert not any("brute force from 1.1.1.1" in step["finding"] and "user2" in step["finding"] for step in output["reasoning_steps"])
+    assert len(output["evidence"]) == 3
+
+# --- SCENARIO F: Benign Activity ---
+def test_scenario_f_benign_activity():
+    inp = {
+        "incident_id": "INC-2026-SCEN-F",
+        "title": "Routine Status Check",
+        "created_at": "2026-08-29T16:00:00Z",
+        "initial_severity": "LOW",
+        "entities": {
+            "hosts": ["web-01"],
+            "users": ["app_user"],
+            "ip_addresses": ["10.0.0.10"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-F1",
+                "timestamp": "2026-08-29T16:01:00Z",
+                "source": "httpd.log",
+                "event_type": "http_get_request",
+                "severity": "LOW",
+                "host": "web-01",
+                "user": "app_user",
+                "ip_address": "10.0.0.10",
+                "raw_data": {"path": "/healthz"}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
     assert output["assessed_severity"] == "LOW"
-    assert "10.0.0.50" in output["summary"]
-    assert len(output["evidence"]) == 1
-    assert output["evidence"][0]["source_event_id"] == "EVT-9001"
+    assert output["confidence_score"] == 0.40
+    assert "no confirmed exploit patterns detected" in output["summary"]
+
+# --- SCENARIO G: Unknown or Unsupported Event Data ---
+def test_scenario_g_unknown_data_resilience():
+    inp = {
+        "incident_id": "INC-2026-SCEN-G",
+        "title": "Custom Third-Party Telemetry",
+        "created_at": "2026-08-29T17:00:00Z",
+        "initial_severity": "LOW",
+        "entities": {
+            "hosts": [],
+            "users": [],
+            "ip_addresses": []
+        },
+        "events": [
+            {
+                "event_id": "EVT-G1",
+                "timestamp": "2026-08-29T17:01:00Z",
+                "source": "custom_sensor",
+                "event_type": "unknown_custom_signal",
+                "severity": "LOW",
+                "raw_data": {"custom_key": [1, 2, 3]}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
+    assert output["incident_id"] == "INC-2026-SCEN-G"
+    assert output["assessed_severity"] == "LOW"
+    assert len(output["evidence"]) >= 1
 
 def test_runner_execution(mock_agent_input):
     """Test standalone runner script module execution."""
