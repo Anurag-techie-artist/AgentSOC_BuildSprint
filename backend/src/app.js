@@ -3,6 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const healthRoutes = require('./routes/health.routes');
 const eventRoutes = require('./routes/event.routes');
+const incidentRoutes = require('./routes/incident.routes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -15,6 +16,7 @@ app.use(express.json());
 // Routes
 app.use('/api/health', healthRoutes);
 app.use('/api/v1/events', eventRoutes);
+app.use('/api/v1/incidents', incidentRoutes);
 
 // Error Handling
 app.use(errorHandler);
