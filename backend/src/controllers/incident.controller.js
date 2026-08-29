@@ -65,3 +65,25 @@ exports.getInvestigation = (req, res, next) => {
     next(error);
   }
 };
+
+exports.respondToIncident = (req, res, next) => {
+  try {
+    const { incident_id } = req.params;
+    const { action_id } = req.body || {};
+
+    if (!action_id) {
+      const error = new Error('action_id is required in request body');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const responseRecord = incidentService.respondToIncident(incident_id, action_id);
+
+    return res.status(200).json({
+      status: 'success',
+      data: responseRecord
+    });
+  } catch (error) {
+    next(error);
+  }
+};

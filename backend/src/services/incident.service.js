@@ -99,6 +99,55 @@ class IncidentService {
   }
 
   /**
+   * Respond to an action recommended in an incident's investigation result.
+   */
+  respondToIncident(incidentId, actionId) {
+    const incident = this.getIncidentById(incidentId);
+    if (!incident) {
+      const error = new Error('Incident not found');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!incident.investigation_result) {
+      const error = new Error('Incident must be investigated before responding');
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const { response_actions } = incident.investigation_result;
+    const matchedAction = (response_actions || []).find(a => a.action_id === actionId);
+
+    if (!matchedAction) {
+      const error = new Error(`Unknown response action_id '${actionId}' for this incident`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!incident.responses) {
+      incident.responses = new Map();
+    }
+
+    const timestamp = new Date().toISOString();
+    const responseRecord = {
+      incident_id: incidentId,
+      action_id: matchedAction.action_id,
+      title: matchedAction.title,
+      status: 'SIMULATED',
+      executed_at: timestamp
+    };
+
+    // Store / update response record for this action_id
+    incident.responses.set(actionId, responseRecord);
+    incident.status = 'RESOLVED';
+    incident.updated_at = timestamp;
+
+    this.incidents.set(incidentId, incident);
+
+    return responseRecord;
+  }
+
+  /**
    * Correlate events based on 5-min time windowing and suspicious sequence rules.
    */
   correlateEvents(eventsToCorrelate = null) {
