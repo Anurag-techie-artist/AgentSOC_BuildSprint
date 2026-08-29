@@ -1,0 +1,71 @@
+{
+  "incident_id": "INC-2026-0001",
+  "title": "SSH Brute Force followed by Privileged System Access",
+  "created_at": "2026-08-29T10:01:05Z",
+  "initial_severity": "HIGH",
+  "entities": {
+    "hosts": ["srv-prod-db01"],
+    "users": ["root", "admin_user"],
+    "ip_addresses": ["192.168.1.105"]
+  },
+  "events": [
+    {
+      "event_id": "EVT-1001",
+      "timestamp": "2026-08-29T10:00:00Z",
+      "source": "auth.log",
+      "event_type": "ssh_login_failure",
+      "severity": "LOW",
+      "host": "srv-prod-db01",
+      "user": "root",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "port": 22,
+        "failure_reason": "Invalid password",
+        "attempts": 1
+      }
+    },
+    {
+      "event_id": "EVT-1002",
+      "timestamp": "2026-08-29T10:00:05Z",
+      "source": "auth.log",
+      "event_type": "ssh_login_failure",
+      "severity": "LOW",
+      "host": "srv-prod-db01",
+      "user": "root",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "port": 22,
+        "failure_reason": "Invalid password",
+        "attempts": 5
+      }
+    },
+    {
+      "event_id": "EVT-1003",
+      "timestamp": "2026-08-29T10:00:12Z",
+      "source": "auth.log",
+      "event_type": "ssh_login_success",
+      "severity": "HIGH",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "port": 22,
+        "auth_method": "publickey_and_password"
+      }
+    },
+    {
+      "event_id": "EVT-1004",
+      "timestamp": "2026-08-29T10:01:00Z",
+      "source": "syslog",
+      "event_type": "sudo_command_execution",
+      "severity": "CRITICAL",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "command": "/usr/bin/cat /etc/shadow",
+        "elevated_user": "root"
+      }
+    }
+  ]
+}

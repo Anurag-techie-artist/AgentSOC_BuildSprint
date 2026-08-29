@@ -1,0 +1,15 @@
+{
+  "incident_id": "INC-2026-0001",
+  "title": "SSH Brute Force followed by Privileged System Access",
+  "status": "OPEN",
+  "created_at": "2026-08-29T10:01:05Z",
+  "updated_at": "2026-08-29T10:01:05Z",
+  "initial_severity": "HIGH",
+  "entities": {
+    "hosts": ["srv-prod-db01"],
+    "users": ["root", "admin_user"],
+    "ip_addresses": ["192.168.1.105"]
+  },
+  "event_ids": ["EVT-1001", "EVT-1002", "EVT-1003", "EVT-1004"],
+  "investigation_result": null
+}

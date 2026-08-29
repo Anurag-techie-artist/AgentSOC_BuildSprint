@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "http://agentsoc.local/schemas/agent_output.json",
+  "title": "AgentOutput",
+  "type": "object",
+  "required": [
+    "incident_id",
+    "summary",
+    "root_cause",
+    "assessed_severity",
+    "confidence_score",
+    "mitre_tactics",
+    "reasoning_steps",
+    "evidence",
+    "response_actions"
+  ],
+  "properties": {
+    "incident_id": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Concise summary of the investigation findings"
+    },
+    "root_cause": {
+      "type": "string",
+      "description": "Identified root cause or attack vector"
+    },
+    "assessed_severity": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    },
+    "confidence_score": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "mitre_tactics": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Mapped MITRE ATT&CK tactics (e.g. TA0001: Initial Access)"
+    },
+    "reasoning_steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step", "action", "finding"],
+        "properties": {
+          "step": { "type": "integer" },
+          "action": { "type": "string" },
+          "finding": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["description", "source_event_id", "relevance"],
+        "properties": {
+          "description": { "type": "string" },
+          "source_event_id": { "type": "string" },
+          "relevance": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "response_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action_id", "title", "description", "risk_level"],
+        "properties": {
+          "action_id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "risk_level": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+          "automated_script": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

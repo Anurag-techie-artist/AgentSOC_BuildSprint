@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "http://agentsoc.local/schemas/incident.json",
+  "title": "Incident",
+  "type": "object",
+  "required": [
+    "incident_id",
+    "title",
+    "status",
+    "created_at",
+    "initial_severity",
+    "entities",
+    "event_ids"
+  ],
+  "properties": {
+    "incident_id": {
+      "type": "string",
+      "description": "Unique identifier for the incident"
+    },
+    "title": {
+      "type": "string",
+      "description": "Short description of the correlated incident"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["OPEN", "INVESTIGATING", "RESOLVED", "CLOSED"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "initial_severity": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    },
+    "entities": {
+      "type": "object",
+      "required": ["hosts", "users", "ip_addresses"],
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "users": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "ip_addresses": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "event_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of security event IDs associated with this incident"
+    },
+    "investigation_result": {
+      "type": ["object", "null"],
+      "description": "Null before agent investigation completes, holds agent output afterwards"
+    }
+  },
+  "additionalProperties": false
+}

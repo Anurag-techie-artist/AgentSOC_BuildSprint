@@ -1,0 +1,69 @@
+{
+  "incident_id": "INC-2026-0001",
+  "summary": "Attacker conducted a SSH password brute force attack from 192.168.1.105, successfully compromised the 'admin_user' account on 'srv-prod-db01', and immediately executed sudo to inspect sensitive credential files (/etc/shadow).",
+  "root_cause": "Weak SSH password policy and exposed SSH port allowing password authentication for administrative user 'admin_user'.",
+  "assessed_severity": "CRITICAL",
+  "confidence_score": 0.95,
+  "mitre_tactics": [
+    "TA0001: Initial Access (Credential Stuffing / Brute Force)",
+    "TA0004: Privilege Escalation (Sudo Abusal)",
+    "TA0006: Credential Access"
+  ],
+  "reasoning_steps": [
+    {
+      "step": 1,
+      "action": "Analyzed authentication log entries for source IP 192.168.1.105.",
+      "finding": "Identified multiple failed login attempts against root within a 12-second window."
+    },
+    {
+      "step": 2,
+      "action": "Correlated successful SSH login immediately following brute force attempts.",
+      "finding": "User 'admin_user' logged in successfully from the same attacking IP address (192.168.1.105)."
+    },
+    {
+      "step": 3,
+      "action": "Evaluated process execution logs for 'admin_user' post-login.",
+      "finding": "Command '/usr/bin/cat /etc/shadow' was run via sudo within 48 seconds of login, indicating active post-exploitation credential harvesting."
+    }
+  ],
+  "evidence": [
+    {
+      "description": "Failed SSH attempts against 'root' from 192.168.1.105",
+      "source_event_id": "EVT-1001",
+      "relevance": "Establishes initial reconnaissance/brute-force activity."
+    },
+    {
+      "description": "Successful authentication for 'admin_user' from 192.168.1.105",
+      "source_event_id": "EVT-1003",
+      "relevance": "Confirms initial access gained via valid credentials."
+    },
+    {
+      "description": "Execution of 'sudo cat /etc/shadow' by 'admin_user'",
+      "source_event_id": "EVT-1004",
+      "relevance": "Direct proof of privilege escalation and credential dumping."
+    }
+  ],
+  "response_actions": [
+    {
+      "action_id": "ACT-001",
+      "title": "Block Source IP 192.168.1.105",
+      "description": "Add IP address 192.168.1.105 to edge firewall blocklist to halt active session.",
+      "risk_level": "LOW",
+      "automated_script": "iptables -A INPUT -s 192.168.1.105 -j DROP"
+    },
+    {
+      "action_id": "ACT-002",
+      "title": "Force Password Reset & Revoke SSH Keys for admin_user",
+      "description": "Invalidate current session tokens and enforce credential reset for compromised user account.",
+      "risk_level": "MEDIUM",
+      "automated_script": "passwd -l admin_user && pkill -u admin_user"
+    },
+    {
+      "action_id": "ACT-003",
+      "title": "Isolate Host srv-prod-db01 for Forensic Sampling",
+      "description": "Apply network isolation to host srv-prod-db01 to prevent potential lateral movement while retaining memory state.",
+      "risk_level": "HIGH",
+      "automated_script": "systemctl stop networking"
+    }
+  ]
+}
