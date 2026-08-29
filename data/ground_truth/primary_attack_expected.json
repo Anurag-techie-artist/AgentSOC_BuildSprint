@@ -1,0 +1,90 @@
+{
+  "incident_id": "INC-2026-0001",
+  "summary": "Attacker performed SSH password brute-forcing against srv-prod-db01 from 192.168.1.105, successfully authenticated as admin_user, escalated privileges to root using 'sudo su', accessed sensitive system files (/etc/shadow and database dumps), and exfiltrated data via curl to external IP 198.51.100.42.",
+  "root_cause": "Brute-force password compromise of SSH credentials for 'admin_user' followed by unconstrained sudo privilege escalation.",
+  "assessed_severity": "CRITICAL",
+  "confidence_score": 0.95,
+  "mitre_tactics": [
+    "TA0001: Initial Access",
+    "TA0004: Privilege Escalation",
+    "TA0006: Credential Access",
+    "TA0010: Exfiltration"
+  ],
+  "reasoning_steps": [
+    {
+      "step": 1,
+      "action": "Analyze authentication logs for host srv-prod-db01.",
+      "finding": "Observed multiple SSH login failures targeting root and admin_user from external IP 192.168.1.105."
+    },
+    {
+      "step": 2,
+      "action": "Correlate authentication events following password brute-force.",
+      "finding": "Identified successful SSH login for admin_user from 192.168.1.105 immediately following failed brute-force attempts."
+    },
+    {
+      "step": 3,
+      "action": "Inspect execution and authorization logs for admin_user session.",
+      "finding": "Detected privilege escalation to root via 'sudo su' command execution."
+    },
+    {
+      "step": 4,
+      "action": "Review file system audit logs for sensitive file access.",
+      "finding": "Confirmed root account accessed sensitive credentials (/etc/shadow) and database backup dump (/var/backups/db_dump_production.sql)."
+    },
+    {
+      "step": 5,
+      "action": "Examine network traffic logs and EDR alerts.",
+      "finding": "Identified outbound HTTP data transfer via curl sending database backup dump to external IP 198.51.100.42."
+    }
+  ],
+  "evidence": [
+    {
+      "description": "Brute-force SSH authentication failures from 192.168.1.105",
+      "source_event_id": "EVT-2001",
+      "relevance": "Indicates active brute-force reconnaissance and password guessing attack."
+    },
+    {
+      "description": "Successful SSH authentication for admin_user from 192.168.1.105",
+      "source_event_id": "EVT-2003",
+      "relevance": "Marks successful initial access via compromised admin_user credentials."
+    },
+    {
+      "description": "Privilege escalation via 'sudo su' by admin_user",
+      "source_event_id": "EVT-2004",
+      "relevance": "Demonstrates successful privilege escalation to superuser (root)."
+    },
+    {
+      "description": "Unauthorized access to /etc/shadow and production database dump",
+      "source_event_id": "EVT-2005",
+      "relevance": "Proves sensitive credential access and collection."
+    },
+    {
+      "description": "Outbound data exfiltration of database dump to 198.51.100.42",
+      "source_event_id": "EVT-2007",
+      "relevance": "Confirms data exfiltration to unauthorized external infrastructure."
+    }
+  ],
+  "response_actions": [
+    {
+      "action_id": "ACT-101",
+      "title": "Block Source IP 192.168.1.105 and Destination IP 198.51.100.42",
+      "description": "Apply firewall drop rules for attacker source IP and exfiltration destination IP to prevent further interactions.",
+      "risk_level": "LOW",
+      "automated_script": "iptables -A INPUT -s 192.168.1.105 -j DROP && iptables -A OUTPUT -d 198.51.100.42 -j DROP"
+    },
+    {
+      "action_id": "ACT-102",
+      "title": "Terminate Active Sessions and Lock admin_user Account",
+      "description": "Kill active processes for admin_user and lock the user account pending credential rotation.",
+      "risk_level": "MEDIUM",
+      "automated_script": "pkill -u admin_user && usermod -L admin_user"
+    },
+    {
+      "action_id": "ACT-103",
+      "title": "Network Isolation of srv-prod-db01 for Forensic Investigation",
+      "description": "Isolate server srv-prod-db01 from internal and external networks to preserve forensic memory state and stop lateral movement.",
+      "risk_level": "HIGH",
+      "automated_script": "iptables -P INPUT DROP && iptables -P OUTPUT DROP"
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "incident_id": "INC-2026-0002",
+  "title": "Standard routine maintenance and authorized SSH key session",
+  "created_at": "2026-08-29T11:30:00Z",
+  "initial_severity": "LOW",
+  "entities": {
+    "hosts": [
+      "srv-prod-db01"
+    ],
+    "users": [
+      "admin_user",
+      "systemd"
+    ],
+    "ip_addresses": [
+      "10.0.1.50"
+    ]
+  },
+  "events": [
+    {
+      "event_id": "EVT-3001",
+      "timestamp": "2026-08-29T11:00:00Z",
+      "source": "syslog",
+      "event_type": "cron_job_execution",
+      "severity": "LOW",
+      "host": "srv-prod-db01",
+      "user": "systemd",
+      "ip_address": "127.0.0.1",
+      "raw_data": {
+        "cron_job": "/etc/cron.hourly/logrotate",
+        "status": "success"
+      }
+    },
+    {
+      "event_id": "EVT-3002",
+      "timestamp": "2026-08-29T11:15:00Z",
+      "source": "auth.log",
+      "event_type": "ssh_login_success",
+      "severity": "LOW",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "10.0.1.50",
+      "raw_data": {
+        "port": 22,
+        "auth_method": "publickey",
+        "key_fingerprint": "SHA256:abc123def4567890ghijklmn"
+      }
+    },
+    {
+      "event_id": "EVT-3003",
+      "timestamp": "2026-08-29T11:18:20Z",
+      "source": "auditd",
+      "event_type": "standard_file_access",
+      "severity": "LOW",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "10.0.1.50",
+      "raw_data": {
+        "file_accessed": "/var/log/syslog",
+        "action": "read",
+        "process": "tail"
+      }
+    },
+    {
+      "event_id": "EVT-3004",
+      "timestamp": "2026-08-29T11:25:00Z",
+      "source": "auth.log",
+      "event_type": "ssh_logout",
+      "severity": "LOW",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "10.0.1.50",
+      "raw_data": {
+        "session_duration_seconds": 600,
+        "status": "clean_exit"
+      }
+    }
+  ]
+}

