@@ -1,5 +1,9 @@
 from typing import Dict, Any, List, Set, Tuple
 from collections import defaultdict
+from datetime import datetime, datetime as dt
+
+# Default maximum time delta allowed between brute force attempts & successful login (in seconds)
+CORRELATION_WINDOW_SECONDS = 3600  # 1 hour window
 
 SEVERITY_SCORES = {
     "LOW": 1,
@@ -22,6 +26,20 @@ MITRE_CREDENTIAL_ACCESS = "TA0006: Credential Access"
 MITRE_DEFENSE_EVASION = "TA0005: Defense Evasion"
 MITRE_EXECUTION = "TA0002: Execution"
 
+def _parse_timestamp(ts_str: Any) -> float:
+    """Safely parse ISO-8601 or standard datetime strings into UNIX epoch seconds. Returns -1.0 if unparseable."""
+    if not isinstance(ts_str, str) or not ts_str.strip():
+        return -1.0
+    ts_clean = ts_str.strip().replace("Z", "+00:00")
+    try:
+        return dt.fromisoformat(ts_clean).timestamp()
+    except Exception:
+        try:
+            # Fallback for alternative standard formats
+            return dt.strptime(ts_str.strip(), "%Y-%m-%d %H:%M:%S").timestamp()
+        except Exception:
+            return -1.0
+
 def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
     incident_id = agent_input["incident_id"]
     title = agent_input.get("title", "Security Incident")
@@ -29,8 +47,11 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
     entities = agent_input.get("entities", {})
     events = agent_input.get("events", [])
 
-    # Sort events by timestamp ascending; handle non-string/missing gracefully
-    sorted_events = sorted(events, key=lambda e: str(e.get("timestamp", "")) if isinstance(e, dict) else "")
+    # Sort events chronologically by parsed timestamp
+    sorted_events = sorted(
+        events,
+        key=lambda e: (_parse_timestamp(e.get("timestamp")) if isinstance(e, dict) else -1.0)
+    )
 
     reasoning_steps: List[Dict[str, Any]] = []
     evidence: List[Dict[str, Any]] = []
@@ -41,8 +62,9 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
     users = set(entities.get("users", []))
     hosts = set(entities.get("hosts", []))
 
-    # Pattern tracking grouped by source IP & user for entity-aware correlation
+    # Pattern tracking
     failures_by_ip_user: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    failures_by_ip: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     successes_by_ip_user: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     sudo_cmds_by_host_user: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     cred_access_events: List[Dict[str, Any]] = []
@@ -66,6 +88,9 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         "finding": time_msg
     })
     step_counter += 1
+
+    # Specific sensitive paths & terms for BUG-003 fix
+    SENSITIVE_INDICATORS = ["/etc/shadow", "/etc/passwd", "mimikatz", "lsass", "sam", "credential_dump", "ntds.dit"]
 
     for ev in sorted_events:
         if not isinstance(ev, dict):
@@ -92,6 +117,7 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         # Categorize events
         if "failure" in evt_type or "failed" in evt_type or evt_type == "ssh_login_failure":
             failures_by_ip_user[(ip_key, user_key)].append(ev)
+            failures_by_ip[ip_key].append(ev)
             mitre_tactics_set.add(MITRE_INITIAL_ACCESS)
             evidence.append({
                 "description": f"Failed authentication attempt for user '{user_key}' from IP {ip_key}",
@@ -110,7 +136,8 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
             if evt_sev in ["HIGH", "CRITICAL"] or raw_data.get("suspicious", False) or "unknown" in ip_key:
                 suspicious_logins.append(ev)
 
-        elif "sudo" in evt_type or "privilege" in evt_type or evt_type == "sudo_command_execution" or "cmd" in evt_type:
+        # BUG-002 Fix: Precise matching for privileged command execution
+        elif ("sudo" in evt_type or "privilege_escalation" in evt_type or evt_type in ["sudo_command_execution", "privileged_execution"] or "sudo" in cmd_str) and "cmd_execution" not in evt_type:
             sudo_cmds_by_host_user[(host_key, user_key)].append(ev)
             mitre_tactics_set.add(MITRE_PRIVILEGE_ESCALATION)
             cmd_name = raw_data.get("command", "privileged command")
@@ -119,11 +146,13 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
                 "source_event_id": evt_id,
                 "relevance": "Privilege escalation or elevated administrative command execution."
             })
-            if any(term in cmd_str for term in ["shadow", "passwd", "mimikatz", "dump", "credential", "cat /etc/shadow"]):
+            # BUG-003 Fix: Explicit sensitive indicators check
+            if any(term in cmd_str for term in SENSITIVE_INDICATORS):
                 cred_access_events.append(ev)
                 mitre_tactics_set.add(MITRE_CREDENTIAL_ACCESS)
 
-        elif any(term in evt_type for term in ["cred", "file_access", "sensitive_read"]) or any(term in cmd_str for term in ["shadow", "passwd", "mimikatz", "dump"]):
+        # BUG-003 Fix: Require explicit sensitive indicator or specific event type
+        elif any(term in evt_type for term in ["cred_access", "sensitive_read", "credential_dump"]) or any(term in cmd_str for term in SENSITIVE_INDICATORS):
             cred_access_events.append(ev)
             mitre_tactics_set.add(MITRE_CREDENTIAL_ACCESS)
             evidence.append({
@@ -144,23 +173,48 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         else:
             benign_events.append(ev)
 
-    # Detect correlated brute force chains per (IP, User)
+    # BUG-005 Fix: Mathematical Timestamp Delta Correlation Window Enforcement
     brute_force_chains = []
     for (ip, usr), fails in failures_by_ip_user.items():
         succs = successes_by_ip_user.get((ip, usr), [])
-        # Also check root brute force converted to admin_user login from same IP
-        if not succs and ip != "unknown_ip":
-            succs = [e for (i, u), ev_list in successes_by_ip_user.items() if i == ip for e in ev_list]
         if succs and len(fails) >= 2:
-            brute_force_chains.append((ip, usr, fails, succs))
+            # Verify chronological order and delta <= CORRELATION_WINDOW_SECONDS
+            last_fail_ts = _parse_timestamp(fails[-1].get("timestamp"))
+            first_succ_ts = _parse_timestamp(succs[0].get("timestamp"))
+            if last_fail_ts >= 0 and first_succ_ts >= 0:
+                delta = first_succ_ts - last_fail_ts
+                if 0 <= delta <= CORRELATION_WINDOW_SECONDS:
+                    brute_force_chains.append((ip, usr, fails, succs))
+
+    ip_probing_then_login = []
+    if not brute_force_chains:
+        for ip, succ_list in [(ip, sl) for (ip, u), sl in successes_by_ip_user.items() if ip != "unknown_ip"]:
+            all_ip_fails = failures_by_ip.get(ip, [])
+            if len(all_ip_fails) >= 2:
+                last_fail_ts = _parse_timestamp(all_ip_fails[-1].get("timestamp"))
+                first_succ_ts = _parse_timestamp(succ_list[0].get("timestamp"))
+                if last_fail_ts >= 0 and first_succ_ts >= 0:
+                    delta = first_succ_ts - last_fail_ts
+                    if 0 <= delta <= CORRELATION_WINDOW_SECONDS:
+                        succ_user = succ_list[0].get("user", "unknown_user")
+                        failed_users = list(set(f.get("user", "unknown") for f in all_ip_fails if f.get("user") != succ_user))
+                        ip_probing_then_login.append((ip, succ_user, failed_users, all_ip_fails, succ_list))
 
     # Step 2: Correlation Reasoning
     if brute_force_chains:
         for ip, usr, fails, succs in brute_force_chains:
             reasoning_steps.append({
                 "step": step_counter,
-                "action": f"Correlated authentication failure sequence with successful login for IP {ip}.",
-                "finding": f"Detected {len(fails)} failed login attempts followed by successful login for account '{succs[0].get('user', usr)}'."
+                "action": f"Correlated authentication failure sequence with successful login for user '{usr}' from IP {ip}.",
+                "finding": f"Detected {len(fails)} failed login attempts followed by successful login for compromised account '{usr}' within correlation window."
+            })
+            step_counter += 1
+    elif ip_probing_then_login:
+        for ip, succ_usr, fail_usrs, fails, succs in ip_probing_then_login:
+            reasoning_steps.append({
+                "step": step_counter,
+                "action": f"Analyzed IP-level authentication activity from source IP {ip}.",
+                "finding": f"Observed {len(fails)} failed login attempts against account(s) {fail_usrs} followed by successful login for user '{succ_usr}' within correlation window."
             })
             step_counter += 1
     elif failures_by_ip_user:
@@ -191,7 +245,7 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         })
         step_counter += 1
 
-    if suspicious_logins and not brute_force_chains:
+    if suspicious_logins and not brute_force_chains and not ip_probing_then_login:
         for sl in suspicious_logins:
             reasoning_steps.append({
                 "step": step_counter,
@@ -200,7 +254,7 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
             })
             step_counter += 1
 
-    if not brute_force_chains and not sudo_cmds_by_host_user and not cred_access_events and not suspicious_logins:
+    if not brute_force_chains and not ip_probing_then_login and not sudo_cmds_by_host_user and not cred_access_events and not suspicious_logins:
         reasoning_steps.append({
             "step": step_counter,
             "action": "Evaluated event severity and threat indicators.",
@@ -208,22 +262,23 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         })
         step_counter += 1
 
-    # Severity & Confidence Calculation
+    # BUG-006 Fix: Severity & Confidence Consistency
     max_event_sev_score = max([SEVERITY_SCORES.get(str(e.get("severity", "LOW")).upper(), 1) for e in sorted_events if isinstance(e, dict)], default=1)
     init_sev_score = SEVERITY_SCORES.get(initial_severity.upper(), 1)
     assessed_score = max(max_event_sev_score, init_sev_score)
 
-    if brute_force_chains and sudo_cmds_by_host_user:
+    has_brute_or_probe = bool(brute_force_chains or ip_probing_then_login)
+    if has_brute_or_probe and sudo_cmds_by_host_user:
         assessed_score = 4 # CRITICAL
-    elif brute_force_chains or cred_access_events or (sudo_cmds_by_host_user and suspicious_logins):
+    elif has_brute_or_probe or cred_access_events or (sudo_cmds_by_host_user and suspicious_logins):
         assessed_score = max(assessed_score, 3) # HIGH or CRITICAL
 
     assessed_severity = SCORE_TO_SEVERITY[assessed_score]
 
-    # Calculate Confidence Score Deterministically
-    if brute_force_chains and sudo_cmds_by_host_user:
+    # Calculate Confidence Score Deterministically (BUG-006 Fix: Require valid window correlation for 0.85+)
+    if has_brute_or_probe and sudo_cmds_by_host_user:
         confidence_score = 0.95
-    elif brute_force_chains or cred_access_events:
+    elif has_brute_or_probe or cred_access_events:
         confidence_score = 0.85
     elif sudo_cmds_by_host_user or suspicious_logins:
         confidence_score = 0.75
@@ -238,10 +293,21 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         host = succs[0].get("host", "target host") if succs else "target host"
         summary = f"Attacker conducted password brute force from {ip}, compromised account '{usr}', and executed privileged commands on host '{host}'."
         root_cause = f"Exposed authentication endpoint allowing password brute force and weak credentials for '{usr}'."
+    elif ip_probing_then_login and sudo_cmds_by_host_user:
+        ip, succ_usr, fail_usrs, _, succs = ip_probing_then_login[0]
+        host = succs[0].get("host", "target host") if succs else "target host"
+        fail_str = ", ".join(f"'{u}'" for u in fail_usrs)
+        summary = f"Attacker probed credentials from IP {ip} against {fail_str}, successfully authenticated as '{succ_usr}' on host '{host}', and executed privileged commands."
+        root_cause = f"Exposed authentication endpoint subject to credential probing and valid credentials for '{succ_usr}'."
     elif brute_force_chains:
         ip, usr, _, succs = brute_force_chains[0]
         summary = f"Successful credential brute force attack detected from IP {ip} targeting account '{usr}'."
         root_cause = f"Weak account password or missing multi-factor authentication for '{usr}'."
+    elif ip_probing_then_login:
+        ip, succ_usr, fail_usrs, _, _ = ip_probing_then_login[0]
+        fail_str = ", ".join(f"'{u}'" for u in fail_usrs)
+        summary = f"Credential probing detected from IP {ip} against {fail_str} followed by successful login for '{succ_usr}'."
+        root_cause = f"Credential probing activity from IP {ip} and compromised credentials for '{succ_usr}'."
     elif cred_access_events:
         summary = f"Sensitive credential file access detected across host(s) {list(hosts)}."
         root_cause = "Unauthorized attempt to access or dump system security credentials."
@@ -258,40 +324,47 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         summary = f"Security incident '{title}' evaluated; no confirmed exploit patterns detected."
         root_cause = "Routine or low-severity operational events."
 
-    # Response Actions Generation
-    action_counter = 1
+    # BUG-004 Fix: Deduplicate Response Actions by (Entity, Purpose) while maintaining sequential action_id
+    actions_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
     for ip in sorted([i for i in ip_addresses if i and i != "unknown_ip"]):
-        if brute_force_chains or failures_by_ip_user or suspicious_logins:
-            response_actions.append({
-                "action_id": f"ACT-00{action_counter}",
-                "title": f"Block Source IP {ip}",
-                "description": f"Enforce firewall rule to drop inbound traffic from attacking IP {ip}.",
-                "risk_level": "LOW",
-                "automated_script": f"iptables -A INPUT -s {ip} -j DROP"
-            })
-            action_counter += 1
+        if has_brute_or_probe or failures_by_ip_user or suspicious_logins:
+            key = (f"ip:{ip}", "block_ip")
+            if key not in actions_map:
+                actions_map[key] = {
+                    "title": f"Block Source IP {ip}",
+                    "description": f"Enforce firewall rule to drop inbound traffic from attacking IP {ip}.",
+                    "risk_level": "LOW",
+                    "automated_script": f"iptables -A INPUT -s {ip} -j DROP"
+                }
 
     for u in sorted([u for u in users if u and u not in ["root", "unknown_user"]]):
-        if brute_force_chains or suspicious_logins or cred_access_events:
-            response_actions.append({
-                "action_id": f"ACT-00{action_counter}",
-                "title": f"Reset Credentials for User {u}",
-                "description": f"Terminate active sessions and force credential reset for account {u}.",
-                "risk_level": "MEDIUM",
-                "automated_script": f"passwd -l {u} && pkill -u {u}"
-            })
-            action_counter += 1
+        if brute_force_chains or ip_probing_then_login or suspicious_logins or cred_access_events:
+            key = (f"user:{u}", "reset_user")
+            if key not in actions_map:
+                actions_map[key] = {
+                    "title": f"Reset Credentials for User {u}",
+                    "description": f"Terminate active sessions and force credential reset for account {u}.",
+                    "risk_level": "MEDIUM",
+                    "automated_script": f"passwd -l {u} && pkill -u {u}"
+                }
 
     if assessed_severity in ["HIGH", "CRITICAL"]:
         for h in sorted([h for h in hosts if h and h != "unknown_host"]):
-            response_actions.append({
-                "action_id": f"ACT-00{action_counter}",
-                "title": f"Isolate Host {h}",
-                "description": f"Apply network isolation policy to host {h} to contain potential lateral movement.",
-                "risk_level": "HIGH",
-                "automated_script": f"systemctl stop networking"
-            })
-            action_counter += 1
+            key = (f"host:{h}", "isolate_host")
+            if key not in actions_map:
+                actions_map[key] = {
+                    "title": f"Isolate Host {h}",
+                    "description": f"Apply network isolation policy to host {h} to contain potential lateral movement.",
+                    "risk_level": "HIGH",
+                    "automated_script": f"systemctl stop networking"
+                }
+
+    action_counter = 1
+    for act_data in actions_map.values():
+        act_data["action_id"] = f"ACT-00{action_counter}"
+        response_actions.append(act_data)
+        action_counter += 1
 
     # Ensure clean MITRE tactics (no duplicate prefixes/labels)
     if not mitre_tactics_set:

@@ -77,6 +77,265 @@ def test_scenario_a_ssh_brute_force(mock_agent_input):
     tactic_ids = [t.split(":")[0] for t in output["mitre_tactics"]]
     assert len(tactic_ids) == len(set(tactic_ids))
 
+# --- REGRESSION TEST FOR BUG-001: Incorrect Compromised Account Attribution ---
+def test_bug_001_account_attribution_regression():
+    """Verify that failures against 'root' do not cause 'root' to be reported as compromised when 'admin_user' logs in."""
+    inp = {
+        "incident_id": "INC-BUG-001",
+        "title": "Root Probing Followed by Admin User Login",
+        "created_at": "2026-08-29T10:00:00Z",
+        "initial_severity": "HIGH",
+        "entities": {
+            "hosts": ["srv-db01"],
+            "users": ["root", "admin_user"],
+            "ip_addresses": ["192.168.1.105"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-1",
+                "timestamp": "2026-08-29T10:00:01Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "srv-db01",
+                "user": "root",
+                "ip_address": "192.168.1.105",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-2",
+                "timestamp": "2026-08-29T10:00:05Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "srv-db01",
+                "user": "root",
+                "ip_address": "192.168.1.105",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-3",
+                "timestamp": "2026-08-29T10:00:10Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_success",
+                "severity": "HIGH",
+                "host": "srv-db01",
+                "user": "admin_user",
+                "ip_address": "192.168.1.105",
+                "raw_data": {}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
+    # Must NOT report root as compromised
+    assert "compromised account 'root'" not in output["summary"]
+    assert "weak credentials for 'root'" not in output["root_cause"]
+    assert "'admin_user'" in output["summary"]
+
+# --- REGRESSION TEST FOR BUG-002: Overly Broad Privileged Command Classification ---
+def test_bug_002_broad_command_classification_regression():
+    """Verify that unprivileged cmd_execution events do not trigger privilege escalation classification."""
+    inp = {
+        "incident_id": "INC-BUG-002",
+        "title": "Unprivileged Command Execution",
+        "created_at": "2026-08-29T11:00:00Z",
+        "initial_severity": "LOW",
+        "entities": {
+            "hosts": ["web-01"],
+            "users": ["app_user"],
+            "ip_addresses": ["10.0.0.5"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-CMD-1",
+                "timestamp": "2026-08-29T11:01:00Z",
+                "source": "app.log",
+                "event_type": "cmd_execution",
+                "severity": "LOW",
+                "host": "web-01",
+                "user": "app_user",
+                "ip_address": "10.0.0.5",
+                "raw_data": {"command": "echo hello"}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
+    assert "TA0004: Privilege Escalation" not in output["mitre_tactics"]
+    assert output["assessed_severity"] == "LOW"
+    assert not any("Execution of privileged command" in e["description"] for e in output["evidence"])
+
+# --- REGRESSION TEST FOR BUG-003: Sensitive Credential Access False Positives ---
+def test_bug_003_credential_access_false_positives():
+    """Verify benign commands containing 'cat' or 'concat' or harmless files do not trigger TA0006 Credential Access."""
+    commands = [
+        "concat files.txt",
+        "cat /tmp/test.txt",
+        "category_list.sh",
+        "netcat -l 8080"
+    ]
+    for idx, cmd in enumerate(commands):
+        inp = {
+            "incident_id": f"INC-BUG-003-{idx}",
+            "title": "Harmless Command Execution",
+            "created_at": "2026-08-29T11:00:00Z",
+            "initial_severity": "LOW",
+            "entities": {
+                "hosts": ["web-01"],
+                "users": ["app_user"],
+                "ip_addresses": ["10.0.0.5"]
+            },
+            "events": [
+                {
+                    "event_id": f"EVT-C-{idx}",
+                    "timestamp": "2026-08-29T11:01:00Z",
+                    "source": "syslog",
+                    "event_type": "process_creation",
+                    "severity": "LOW",
+                    "host": "web-01",
+                    "user": "app_user",
+                    "ip_address": "10.0.0.5",
+                    "raw_data": {"command": cmd}
+                }
+            ]
+        }
+        output = investigate(inp)
+        validate_agent_output(output)
+        assert "TA0006: Credential Access" not in output["mitre_tactics"]
+        assert output["assessed_severity"] == "LOW"
+
+# --- REGRESSION TEST FOR BUG-004: Deduplication of Response Actions ---
+def test_bug_004_response_actions_deduplication():
+    """Verify that multiple events for the same IP or User do not generate duplicate response actions."""
+    inp = {
+        "incident_id": "INC-BUG-004",
+        "title": "Multiple Events Same IP",
+        "created_at": "2026-08-29T12:00:00Z",
+        "initial_severity": "HIGH",
+        "entities": {
+            "hosts": ["host-1"],
+            "users": ["alice"],
+            "ip_addresses": ["192.168.1.50"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-1",
+                "timestamp": "2026-08-29T12:01:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "host-1",
+                "user": "alice",
+                "ip_address": "192.168.1.50",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-2",
+                "timestamp": "2026-08-29T12:02:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "host-1",
+                "user": "alice",
+                "ip_address": "192.168.1.50",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-3",
+                "timestamp": "2026-08-29T12:03:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_success",
+                "severity": "HIGH",
+                "host": "host-1",
+                "user": "alice",
+                "ip_address": "192.168.1.50",
+                "raw_data": {}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+    
+    actions = output["response_actions"]
+    ip_blocks = [a for a in actions if "Block Source IP 192.168.1.50" in a["title"]]
+    user_resets = [a for a in actions if "Reset Credentials for User alice" in a["title"]]
+    
+    assert len(ip_blocks) == 1
+    assert len(user_resets) == 1
+    assert [a["action_id"] for a in actions] == ["ACT-001", "ACT-002", "ACT-003"]
+
+# --- REGRESSION TEST FOR BUG-005 & BUG-006: Timestamp Delta Correlation Window & Confidence Scoring ---
+def test_bug_005_006_timestamp_window_correlation_and_confidence():
+    """Verify that brute force attempts > 1 hour prior to login do NOT correlate into a brute force chain or inflate confidence."""
+    inp_outside_window = {
+        "incident_id": "INC-BUG-005-OUT",
+        "title": "Old Failures and New Login",
+        "created_at": "2026-08-29T15:00:00Z",
+        "initial_severity": "LOW",
+        "entities": {
+            "hosts": ["host-1"],
+            "users": ["charlie"],
+            "ip_addresses": ["10.0.0.99"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-OLD-1",
+                "timestamp": "2026-08-29T08:00:00Z",  # 7 hours prior
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "host-1",
+                "user": "charlie",
+                "ip_address": "10.0.0.99",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-OLD-2",
+                "timestamp": "2026-08-29T08:01:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "host-1",
+                "user": "charlie",
+                "ip_address": "10.0.0.99",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-NEW-3",
+                "timestamp": "2026-08-29T15:00:00Z",  # Current login
+                "source": "auth.log",
+                "event_type": "ssh_login_success",
+                "severity": "LOW",
+                "host": "host-1",
+                "user": "charlie",
+                "ip_address": "10.0.0.99",
+                "raw_data": {}
+            }
+        ]
+    }
+    output = investigate(inp_outside_window)
+    validate_agent_output(output)
+    
+    # Must NOT correlate into brute force compromise chain due to time gap
+    assert "brute force" not in output["summary"].lower()
+    assert output["confidence_score"] < 0.85
+
+    # Conversely, events WITHIN 1 hour window MUST correlate and receive 0.85+ confidence
+    inp_inside_window = dict(inp_outside_window)
+    inp_inside_window["events"] = [
+        dict(inp_outside_window["events"][0], timestamp="2026-08-29T14:50:00Z"),
+        dict(inp_outside_window["events"][1], timestamp="2026-08-29T14:55:00Z"),
+        dict(inp_outside_window["events"][2], timestamp="2026-08-29T15:00:00Z")
+    ]
+    output_inside = investigate(inp_inside_window)
+    validate_agent_output(output_inside)
+    
+    assert "brute force" in output_inside["summary"].lower()
+    assert output_inside["confidence_score"] >= 0.85
+
 # --- SCENARIO B: Privileged Command Execution (Standalone) ---
 def test_scenario_b_privileged_command_execution():
     inp = {
