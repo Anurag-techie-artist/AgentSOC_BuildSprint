@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from src.agent import investigate
 from src.validator import validate_agent_input, validate_agent_output, ValidationError
+from src.providers import MockLLMProvider
 
 @pytest.fixture
 def mock_agent_input():
@@ -60,6 +61,70 @@ def test_validate_invalid_output_additional_properties(mock_agent_output):
     invalid_output["unknown_extra_field"] = "bad"
     with pytest.raises(ValidationError, match="unexpected additional property"):
         validate_agent_output(invalid_output)
+
+# --- PHASE 4 TESTS: AI Reasoning, Grounding, and Fallback ---
+
+def test_phase4_ai_reasoning_primary_scenario(mock_agent_input):
+    """Test Phase 4 AI Reasoning with MockLLMProvider on primary SSH scenario."""
+    provider = MockLLMProvider()
+    output = investigate(mock_agent_input, provider=provider)
+    validate_agent_output(output)
+
+    assert output["incident_id"] == "INC-2026-0001"
+    assert output["assessed_severity"] == "CRITICAL"
+    assert output["confidence_score"] == 0.95
+    assert "AI Assessment:" in output["summary"]
+    assert any("AI Security Synthesis" in step["action"] for step in output["reasoning_steps"])
+
+def test_phase4_provider_failure_fallback(mock_agent_input):
+    """Test Phase 4 safe fallback when AI Provider fails or raises exception."""
+    failing_provider = MockLLMProvider(should_fail=True)
+    output = investigate(mock_agent_input, provider=failing_provider)
+    validate_agent_output(output)
+
+    assert output["incident_id"] == "INC-2026-0001"
+    assert output["assessed_severity"] == "CRITICAL"
+    assert any("AI Provider was unavailable or unparseable" in step["finding"] for step in output["reasoning_steps"])
+
+def test_phase4_severity_confidence_grounding_bound(mock_agent_input):
+    """Test that AI cannot inflate severity or confidence above evidence bounds without grounding."""
+    inflated_override = {
+        "summary": "AI attempts artificial escalation.",
+        "root_cause": "AI hallucinated critical vulnerability.",
+        "assessed_severity": "CRITICAL",
+        "confidence_score": 1.0,  # Attempts to inflate confidence
+        "reasoning_steps": [{"step": 1, "action": "AI test", "finding": "test"}]
+    }
+    
+    # Input with LOW severity events
+    low_input = {
+        "incident_id": "INC-LOW-1",
+        "title": "Low Severity Test",
+        "created_at": "2026-08-29T10:00:00Z",
+        "initial_severity": "LOW",
+        "entities": {"hosts": ["h1"], "users": ["u1"], "ip_addresses": ["1.1.1.1"]},
+        "events": [
+            {
+                "event_id": "EVT-L1",
+                "timestamp": "2026-08-29T10:01:00Z",
+                "source": "syslog",
+                "event_type": "status_check",
+                "severity": "LOW",
+                "host": "h1",
+                "user": "u1",
+                "ip_address": "1.1.1.1",
+                "raw_data": {}
+            }
+        ]
+    }
+    
+    provider = MockLLMProvider(response_override=inflated_override)
+    output = investigate(low_input, provider=provider)
+    validate_agent_output(output)
+
+    # Assessed severity and confidence must be capped by evidence bounds
+    assert output["assessed_severity"] == "LOW"
+    assert output["confidence_score"] <= 0.40
 
 # --- SCENARIO A: SSH Brute Force Followed by Successful Login ---
 def test_scenario_a_ssh_brute_force(mock_agent_input):
