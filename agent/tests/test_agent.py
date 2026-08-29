@@ -619,6 +619,114 @@ def test_scenario_g_unknown_data_resilience():
     assert output["assessed_severity"] == "LOW"
     assert len(output["evidence"]) >= 1
 
+# --- PHASE 5 TESTS: Response Intelligence & Action Enforcement ---
+
+def test_phase5_response_intelligence_entity_targeting():
+    """Verify that response actions target only entities with suspicious/malicious activity."""
+    inp = {
+        "incident_id": "INC-2026-P5-1",
+        "title": "Selective Entity Activity",
+        "created_at": "2026-08-29T18:00:00Z",
+        "initial_severity": "HIGH",
+        "entities": {
+            "hosts": ["web-clean-01", "db-compromised-02"],
+            "users": ["benign_user", "hacked_user"],
+            "ip_addresses": ["10.0.0.1", "198.51.100.99"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-P5-1",
+                "timestamp": "2026-08-29T18:01:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "db-compromised-02",
+                "user": "hacked_user",
+                "ip_address": "198.51.100.99",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-P5-2",
+                "timestamp": "2026-08-29T18:02:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "db-compromised-02",
+                "user": "hacked_user",
+                "ip_address": "198.51.100.99",
+                "raw_data": {}
+            },
+            {
+                "event_id": "EVT-P5-3",
+                "timestamp": "2026-08-29T18:03:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_success",
+                "severity": "HIGH",
+                "host": "db-compromised-02",
+                "user": "hacked_user",
+                "ip_address": "198.51.100.99",
+                "raw_data": {}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+
+    actions = output["response_actions"]
+    ip_blocks = [a for a in actions if "Block Source IP" in a["title"]]
+    user_resets = [a for a in actions if "Reset Credentials" in a["title"]]
+    host_isolations = [a for a in actions if "Isolate Host" in a["title"]]
+
+    # Ensure IP 198.51.100.99 is blocked, but NOT 10.0.0.1
+    assert any("198.51.100.99" in a["title"] for a in ip_blocks)
+    assert not any("10.0.0.1" in a["title"] for a in ip_blocks)
+
+    # Ensure hacked_user credential reset, but NOT benign_user
+    assert any("hacked_user" in a["title"] for a in user_resets)
+    assert not any("benign_user" in a["title"] for a in user_resets)
+
+    # Ensure db-compromised-02 host isolated (since severity is HIGH/CRITICAL), but NOT web-clean-01
+    assert any("db-compromised-02" in a["title"] for a in host_isolations)
+    assert not any("web-clean-01" in a["title"] for a in host_isolations)
+
+
+def test_phase5_conservative_non_destructive_response():
+    """Verify that response actions remain conservative and schema compliant without destructive wildcarding."""
+    inp = {
+        "incident_id": "INC-2026-P5-2",
+        "title": "Low Severity Probe",
+        "created_at": "2026-08-29T19:00:00Z",
+        "initial_severity": "LOW",
+        "entities": {
+            "hosts": ["srv-low-01"],
+            "users": ["guest"],
+            "ip_addresses": ["192.168.1.200"]
+        },
+        "events": [
+            {
+                "event_id": "EVT-P5-LOW",
+                "timestamp": "2026-08-29T19:01:00Z",
+                "source": "auth.log",
+                "event_type": "ssh_login_failure",
+                "severity": "LOW",
+                "host": "srv-low-01",
+                "user": "guest",
+                "ip_address": "192.168.1.200",
+                "raw_data": {}
+            }
+        ]
+    }
+    output = investigate(inp)
+    validate_agent_output(output)
+
+    # Low severity event should NOT trigger HIGH risk host isolation
+    assert not any(a["risk_level"] == "HIGH" for a in output["response_actions"])
+    # Action IDs must follow sequential ACT-00X format
+    for idx, act in enumerate(output["response_actions"], 1):
+        assert act["action_id"] == f"ACT-{idx:03d}"
+        assert act["risk_level"] in ["LOW", "MEDIUM", "HIGH"]
+
+
 def test_runner_execution(mock_agent_input):
     """Test standalone runner script module execution."""
     from src.runner import main

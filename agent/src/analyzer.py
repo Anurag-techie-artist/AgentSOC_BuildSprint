@@ -325,32 +325,90 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
         root_cause = "Routine or low-severity operational events."
 
     # BUG-004 Fix: Deduplicate Response Actions by (Entity, Purpose) while maintaining sequential action_id
+    # Phase 5: Entity-specific, evidence-grounded response intelligence
+    suspicious_ips: Set[str] = set()
+    targeted_users: Set[str] = set()
+    affected_hosts: Set[str] = set()
+
+    for (ip, usr), fails in failures_by_ip_user.items():
+        if ip and ip != "unknown_ip":
+            suspicious_ips.add(ip)
+        if usr and usr not in ["root", "unknown_user"]:
+            targeted_users.add(usr)
+
+    for (ip, usr), succs in successes_by_ip_user.items():
+        if (ip, usr) in [chain[:2] for chain in brute_force_chains] or any(p[0] == ip and p[1] == usr for p in ip_probing_then_login):
+            if ip and ip != "unknown_ip":
+                suspicious_ips.add(ip)
+            if usr and usr not in ["root", "unknown_user"]:
+                targeted_users.add(usr)
+            for s in succs:
+                if s.get("host") and s.get("host") != "unknown_host":
+                    affected_hosts.add(s.get("host"))
+
+    for sl in suspicious_logins:
+        ip = sl.get("ip_address")
+        usr = sl.get("user")
+        hst = sl.get("host")
+        if ip and ip != "unknown_ip":
+            suspicious_ips.add(ip)
+        if usr and usr not in ["root", "unknown_user"]:
+            targeted_users.add(usr)
+        if hst and hst != "unknown_host":
+            affected_hosts.add(hst)
+
+    for (h, u), cmds in sudo_cmds_by_host_user.items():
+        if h and h != "unknown_host":
+            affected_hosts.add(h)
+        if u and u not in ["root", "unknown_user"]:
+            targeted_users.add(u)
+
+    for ev in cred_access_events:
+        ip = ev.get("ip_address")
+        usr = ev.get("user")
+        hst = ev.get("host")
+        if ip and ip != "unknown_ip":
+            suspicious_ips.add(ip)
+        if usr and usr not in ["root", "unknown_user"]:
+            targeted_users.add(usr)
+        if hst and hst != "unknown_host":
+            affected_hosts.add(hst)
+
+    for ev in other_suspicious_events:
+        ip = ev.get("ip_address")
+        usr = ev.get("user")
+        hst = ev.get("host")
+        if ip and ip != "unknown_ip":
+            suspicious_ips.add(ip)
+        if usr and usr not in ["root", "unknown_user"]:
+            targeted_users.add(usr)
+        if hst and hst != "unknown_host":
+            affected_hosts.add(hst)
+
     actions_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
-    for ip in sorted([i for i in ip_addresses if i and i != "unknown_ip"]):
-        if has_brute_or_probe or failures_by_ip_user or suspicious_logins:
-            key = (f"ip:{ip}", "block_ip")
-            if key not in actions_map:
-                actions_map[key] = {
-                    "title": f"Block Source IP {ip}",
-                    "description": f"Enforce firewall rule to drop inbound traffic from attacking IP {ip}.",
-                    "risk_level": "LOW",
-                    "automated_script": f"iptables -A INPUT -s {ip} -j DROP"
-                }
+    for ip in sorted(list(suspicious_ips)):
+        key = (f"ip:{ip}", "block_ip")
+        if key not in actions_map:
+            actions_map[key] = {
+                "title": f"Block Source IP {ip}",
+                "description": f"Enforce firewall rule to drop inbound traffic from attacking IP {ip}.",
+                "risk_level": "LOW",
+                "automated_script": f"iptables -A INPUT -s {ip} -j DROP"
+            }
 
-    for u in sorted([u for u in users if u and u not in ["root", "unknown_user"]]):
-        if brute_force_chains or ip_probing_then_login or suspicious_logins or cred_access_events:
-            key = (f"user:{u}", "reset_user")
-            if key not in actions_map:
-                actions_map[key] = {
-                    "title": f"Reset Credentials for User {u}",
-                    "description": f"Terminate active sessions and force credential reset for account {u}.",
-                    "risk_level": "MEDIUM",
-                    "automated_script": f"passwd -l {u} && pkill -u {u}"
-                }
+    for u in sorted(list(targeted_users)):
+        key = (f"user:{u}", "reset_user")
+        if key not in actions_map:
+            actions_map[key] = {
+                "title": f"Reset Credentials for User {u}",
+                "description": f"Terminate active sessions and force credential reset for account {u}.",
+                "risk_level": "MEDIUM",
+                "automated_script": f"passwd -l {u} && pkill -u {u}"
+            }
 
     if assessed_severity in ["HIGH", "CRITICAL"]:
-        for h in sorted([h for h in hosts if h and h != "unknown_host"]):
+        for h in sorted(list(affected_hosts)):
             key = (f"host:{h}", "isolate_host")
             if key not in actions_map:
                 actions_map[key] = {
@@ -362,7 +420,7 @@ def analyze_events(agent_input: Dict[str, Any]) -> Dict[str, Any]:
 
     action_counter = 1
     for act_data in actions_map.values():
-        act_data["action_id"] = f"ACT-00{action_counter}"
+        act_data["action_id"] = f"ACT-{action_counter:03d}"
         response_actions.append(act_data)
         action_counter += 1
 
