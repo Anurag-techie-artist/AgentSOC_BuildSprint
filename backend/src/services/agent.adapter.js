@@ -1,6 +1,7 @@
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 const { agentInputSchema, agentOutputSchema, securityEventSchema } = require('../models/schemas');
+const realAgent = require('./real.agent');
 const mockAgent = require('./mock.agent');
 
 const ajv = new Ajv({ allErrors: true });
@@ -12,8 +13,10 @@ ajv.addSchema(securityEventSchema, 'security_event.json');
 const validateAgentInput = ajv.compile(agentInputSchema);
 const validateAgentOutput = ajv.compile(agentOutputSchema);
 
+const defaultAgent = process.env.USE_MOCK_AGENT === 'true' ? mockAgent : realAgent;
+
 class AgentAdapter {
-  constructor(agentImpl = mockAgent) {
+  constructor(agentImpl = defaultAgent) {
     this.agent = agentImpl;
   }
 

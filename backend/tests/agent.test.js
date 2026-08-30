@@ -1,8 +1,10 @@
 const agentAdapter = require('../src/services/agent.adapter');
+const realAgent = require('../src/services/real.agent');
+const mockAgent = require('../src/services/mock.agent');
 const mockAgentInputFixture = require('../../contracts/mocks/mock_agent_input.json');
 
-describe('Agent Adapter & Mock Agent', () => {
-  it('1. Mock Agent accepts valid AgentInput and returns valid AgentOutput', async () => {
+describe('Agent Adapter & Real / Mock Agents', () => {
+  it('1. Real Agent accepts valid AgentInput and returns valid AgentOutput', async () => {
     const result = await agentAdapter.analyzeIncident(mockAgentInputFixture);
     expect(result).toBeDefined();
     expect(result.summary).toBeDefined();
@@ -26,7 +28,7 @@ describe('Agent Adapter & Mock Agent', () => {
     await expect(agentAdapter.analyzeIncident(invalidInput)).rejects.toThrow(/Invalid AgentInput/);
   });
 
-  it('5. Mock Agent is deterministic for the same input', async () => {
+  it('5. Agent is deterministic for the same input', async () => {
     const res1 = await agentAdapter.analyzeIncident(mockAgentInputFixture);
     const res2 = await agentAdapter.analyzeIncident(mockAgentInputFixture);
 
@@ -37,10 +39,33 @@ describe('Agent Adapter & Mock Agent', () => {
     const brokenAgent = {
       runInvestigation: async () => ({ incident_id: 'INC-001' }) // Missing required fields
     };
-    const { default: _, ...mockModule } = jest.requireActual('../src/services/agent.adapter');
     const AgentAdapterClass = agentAdapter.constructor;
     const testAdapter = new AgentAdapterClass(brokenAgent);
 
     await expect(testAdapter.analyzeIncident(mockAgentInputFixture)).rejects.toThrow(/Invalid AgentOutput/);
+  });
+
+  it('7. Mock Agent fallback works correctly when instantiated with mockAgent', async () => {
+    const AgentAdapterClass = agentAdapter.constructor;
+    const mockAdapter = new AgentAdapterClass(mockAgent);
+    const result = await mockAdapter.analyzeIncident(mockAgentInputFixture);
+    expect(result).toBeDefined();
+    expect(result.incident_id).toBe(mockAgentInputFixture.incident_id);
+  });
+
+  it('8. Explicitly proves AgentAdapter invokes RealAgent implementation by default', async () => {
+    const realAgentSpy = jest.spyOn(realAgent, 'runInvestigation');
+    const mockAgentSpy = jest.spyOn(mockAgent, 'runInvestigation');
+
+    try {
+      await agentAdapter.analyzeIncident(mockAgentInputFixture);
+
+      expect(realAgentSpy).toHaveBeenCalledTimes(1);
+      expect(realAgentSpy).toHaveBeenCalledWith(mockAgentInputFixture);
+      expect(mockAgentSpy).not.toHaveBeenCalled();
+    } finally {
+      realAgentSpy.mockRestore();
+      mockAgentSpy.mockRestore();
+    }
   });
 });

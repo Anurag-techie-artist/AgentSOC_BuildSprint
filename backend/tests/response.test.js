@@ -56,7 +56,7 @@ describe('POST /api/v1/incidents/:incident_id/respond', () => {
     const data = res.body.data;
     expect(data.incident_id).toBe(createdIncident.incident_id);
     expect(data.action_id).toBe('ACT-001');
-    expect(data.title).toContain('Block IP address');
+    expect(data.title).toMatch(/Block.*IP/);
     expect(data.status).toBe('SIMULATED');
     expect(data.executed_at).toBeDefined();
   });
