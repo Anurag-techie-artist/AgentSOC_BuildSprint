@@ -3,6 +3,8 @@ const app = require('../src/app');
 const eventService = require('../src/services/event.service');
 const incidentService = require('../src/services/incident.service');
 const agentAdapter = require('../src/services/agent.adapter');
+const realAgent = require('../src/services/real.agent');
+const mockAgent = require('../src/services/mock.agent');
 
 const attackEvents = [
   {
@@ -124,5 +126,30 @@ describe('POST /api/v1/incidents/:incident_id/investigate', () => {
     const inc = incidentService.getIncidentById(createdIncident.incident_id);
     expect(inc.investigation_result).toBeDefined();
     expect(inc.status).toBe('INVESTIGATING');
+  });
+
+  it('6. REAL Agent E2E: HTTP POST /investigate invokes REAL Python Agent, not Mock Agent', async () => {
+    const realAgentSpy = jest.spyOn(realAgent, 'runInvestigation');
+    const mockAgentSpy = jest.spyOn(mockAgent, 'runInvestigation');
+
+    try {
+      const res = await request(app)
+        .post(`/api/v1/incidents/${createdIncident.incident_id}/investigate`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.status).toBe('success');
+
+      // Prove that RealAgent (python runner) was invoked
+      expect(realAgentSpy).toHaveBeenCalledTimes(1);
+      expect(mockAgentSpy).not.toHaveBeenCalled();
+
+      // Validate returned AgentOutput against schema
+      expect(() => agentAdapter.validateOutput(res.body.data)).not.toThrow();
+      expect(res.body.data.incident_id).toBe(createdIncident.incident_id);
+      expect(res.body.data.summary).toBeDefined();
+    } finally {
+      realAgentSpy.mockRestore();
+      mockAgentSpy.mockRestore();
+    }
   });
 });
