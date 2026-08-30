@@ -1,9 +1,9 @@
 import React from 'react';
 import { SeverityBadge } from './SeverityBadge';
 import { ConfidenceBadge } from './ConfidenceBadge';
-import { Server, User, Network, Calendar, ShieldCheck } from 'lucide-react';
+import { Server, User, Network, Calendar, Brain, RefreshCcw } from 'lucide-react';
 
-export const IncidentDetail = ({ incident, agentOutput }) => {
+export const IncidentDetail = ({ incident, agentOutput, onInvestigate, isInvestigating }) => {
   if (!incident) return null;
 
   return (
@@ -21,9 +21,31 @@ export const IncidentDetail = ({ incident, agentOutput }) => {
           <h1 className="text-xl font-bold text-gray-100">{incident.title}</h1>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <SeverityBadge severity={agentOutput?.assessed_severity || incident.initial_severity} />
           {agentOutput && <ConfidenceBadge score={agentOutput.confidence_score} />}
+
+          <button
+            onClick={onInvestigate}
+            disabled={isInvestigating}
+            className={`px-4 py-2 rounded font-mono text-xs font-bold flex items-center gap-2 transition-all shadow-md ${
+              isInvestigating
+                ? 'bg-purple-950 text-purple-300 border border-purple-800 cursor-not-allowed'
+                : 'bg-purple-600 hover:bg-purple-500 text-white border border-purple-500 shadow-purple-950'
+            }`}
+          >
+            {isInvestigating ? (
+              <>
+                <RefreshCcw className="w-4 h-4 animate-spin text-purple-300" />
+                <span>AGENT WORKING...</span>
+              </>
+            ) : (
+              <>
+                <Brain className="w-4 h-4 text-purple-200" />
+                <span>RUN AGENT INVESTIGATION</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 

@@ -1,17 +1,37 @@
 import React, { useState } from 'react';
-import { Shield, Play, CheckCircle, Terminal, AlertTriangle } from 'lucide-react';
+import { Shield, Play, CheckCircle, Terminal, RefreshCcw, AlertCircle } from 'lucide-react';
+import { respondToIncident } from '../services/api';
 
 export const ResponseActions = ({ actions, incidentId }) => {
   const [simulatedActions, setSimulatedActions] = useState({});
+  const [loadingActions, setLoadingActions] = useState({});
+  const [actionErrors, setActionErrors] = useState({});
 
-  const handleSimulateAction = (actionId) => {
-    setSimulatedActions(prev => ({
-      ...prev,
-      [actionId]: {
-        status: 'SIMULATED',
-        timestamp: new Date().toLocaleTimeString()
-      }
-    }));
+  const handleSimulateAction = async (actionId) => {
+    if (loadingActions[actionId]) return;
+
+    setLoadingActions(prev => ({ ...prev, [actionId]: true }));
+    setActionErrors(prev => ({ ...prev, [actionId]: null }));
+
+    try {
+      const responseData = await respondToIncident(incidentId, actionId);
+      setSimulatedActions(prev => ({
+        ...prev,
+        [actionId]: {
+          status: responseData.status || 'SIMULATED',
+          timestamp: responseData.executed_at
+            ? new Date(responseData.executed_at).toLocaleTimeString()
+            : new Date().toLocaleTimeString()
+        }
+      }));
+    } catch (err) {
+      setActionErrors(prev => ({
+        ...prev,
+        [actionId]: err.message || 'Execution failed'
+      }));
+    } finally {
+      setLoadingActions(prev => ({ ...prev, [actionId]: false }));
+    }
   };
 
   if (!actions || actions.length === 0) {
@@ -54,6 +74,8 @@ export const ResponseActions = ({ actions, incidentId }) => {
         {actions.map((act) => {
           const simState = simulatedActions[act.action_id];
           const isSimulated = !!simState;
+          const isLoading = !!loadingActions[act.action_id];
+          const actionError = actionErrors[act.action_id];
 
           return (
             <div
@@ -83,9 +105,16 @@ export const ResponseActions = ({ actions, incidentId }) => {
                 </p>
 
                 {act.automated_script && (
-                  <div className="bg-black/60 p-2 rounded text-[11px] font-mono text-emerald-400 mb-4 border border-gray-800 flex items-center gap-1.5 overflow-x-auto">
+                  <div className="bg-black/60 p-2 rounded text-[11px] font-mono text-emerald-400 mb-3 border border-gray-800 flex items-center gap-1.5 overflow-x-auto">
                     <Terminal className="w-3.5 h-3.5 text-gray-500 shrink-0" />
                     <code>{act.automated_script}</code>
+                  </div>
+                )}
+
+                {actionError && (
+                  <div className="bg-red-950/60 border border-red-800/80 rounded p-2 mb-3 text-[11px] font-mono text-red-300 flex items-start gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                    <span>{actionError}</span>
                   </div>
                 )}
               </div>
@@ -102,10 +131,24 @@ export const ResponseActions = ({ actions, incidentId }) => {
                 ) : (
                   <button
                     onClick={() => handleSimulateAction(act.action_id)}
-                    className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white font-mono text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors shadow-md shadow-blue-900/40"
+                    disabled={isLoading}
+                    className={`w-full py-2 px-3 font-mono text-xs font-bold rounded flex items-center justify-center gap-2 transition-colors shadow-md ${
+                      isLoading
+                        ? 'bg-blue-950 text-blue-300 border border-blue-800 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40'
+                    }`}
                   >
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    SIMULATE ACTION
+                    {isLoading ? (
+                      <>
+                        <RefreshCcw className="w-3.5 h-3.5 animate-spin text-blue-300" />
+                        <span>EXECUTING...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <span>SIMULATE ACTION</span>
+                      </>
+                    )}
                   </button>
                 )}
               </div>
