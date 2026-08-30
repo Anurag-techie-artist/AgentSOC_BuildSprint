@@ -212,14 +212,37 @@ class IncidentService {
 
       const clusterEventIds = clusterEvents.map(e => e.event_id);
 
-      // Rule 5: Duplicate protection
-      // Check if any existing incident already covers all these event IDs or overlaps completely
+      // Rule 5: Duplicate protection & incident update
+      // Check if any existing incident already covers these event IDs or overlaps completely
       const existing = Array.from(this.incidents.values()).find(inc =>
         clusterEventIds.every(id => inc.event_ids.includes(id)) ||
         inc.event_ids.every(id => clusterEventIds.includes(id))
       );
 
+      const severityLevels = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+
       if (existing) {
+        // Update existing incident with any new event IDs or higher severity
+        for (const e of clusterEvents) {
+          if (!existing.event_ids.includes(e.event_id)) {
+            existing.event_ids.push(e.event_id);
+          }
+          if ((severityLevels[e.severity] || 0) > (severityLevels[existing.initial_severity] || 0)) {
+            existing.initial_severity = e.severity;
+          }
+        }
+        const clusterHosts = Array.from(new Set(clusterEvents.map(e => e.host).filter(Boolean)));
+        const clusterUsers = Array.from(new Set(clusterEvents.map(e => e.user).filter(Boolean)));
+        const clusterIps = Array.from(new Set(clusterEvents.map(e => e.ip_address).filter(Boolean)));
+
+        existing.entities.hosts = Array.from(new Set([...(existing.entities.hosts || []), ...clusterHosts]));
+        existing.entities.users = Array.from(new Set([...(existing.entities.users || []), ...clusterUsers]));
+        existing.entities.ip_addresses = Array.from(new Set([...(existing.entities.ip_addresses || []), ...clusterIps]));
+
+        const timestamps = clusterEvents.map(e => new Date(e.timestamp).getTime()).filter(t => !isNaN(t));
+        if (timestamps.length > 0) {
+          existing.updated_at = new Date(Math.max(...timestamps)).toISOString();
+        }
         continue;
       }
 
@@ -229,7 +252,6 @@ class IncidentService {
       const ip_addresses = Array.from(new Set(clusterEvents.map(e => e.ip_address).filter(Boolean)));
 
       // Highest severity in cluster
-      const severityLevels = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
       let maxSev = 'LOW';
       for (const e of clusterEvents) {
         if ((severityLevels[e.severity] || 0) > (severityLevels[maxSev] || 0)) {

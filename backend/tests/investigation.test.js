@@ -65,7 +65,7 @@ describe('POST /api/v1/incidents/:incident_id/investigate', () => {
       await request(app).post('/api/v1/events/ingest').send(evt);
     }
     const correlated = incidentService.correlateEvents();
-    createdIncident = correlated[0];
+    createdIncident = correlated[0] || incidentService.getAllIncidents()[0];
   });
 
   it('1. Successful investigation returns 200 and valid AgentOutput', async () => {

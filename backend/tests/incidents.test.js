@@ -186,7 +186,7 @@ describe('Incident API and Correlation', () => {
     for (const evt of attackEvents) {
       await request(app).post('/api/v1/events/ingest').send(evt);
     }
-    const [created] = incidentService.correlateEvents();
+    const created = incidentService.getAllIncidents()[0];
 
     const res = await request(app).get(`/api/v1/incidents/${created.incident_id}`);
     expect(res.statusCode).toBe(200);

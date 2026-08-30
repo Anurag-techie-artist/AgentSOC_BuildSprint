@@ -19,30 +19,42 @@ export function App() {
   const [isInvestigating, setIsInvestigating] = useState(false);
   const [error, setError] = useState(null);
 
-  const loadData = async () => {
-    setIsLoading(true);
-    setError(null);
+  const loadData = async (showLoading = true) => {
+    if (showLoading) {
+      setIsLoading(true);
+      setError(null);
+    }
     try {
       const data = await fetchIncidents();
       setIncidents(data);
       if (data && data.length > 0) {
-        setSelectedIncidentId(data[0].incident_id);
+        setSelectedIncidentId(prev => prev || data[0].incident_id);
       } else {
         setSelectedIncidentId(null);
         setSelectedIncidentDetail(null);
       }
     } catch (err) {
-      setError(err.message || 'Failed to connect to backend incident API');
-      setIncidents([]);
-      setSelectedIncidentId(null);
-      setSelectedIncidentDetail(null);
+      if (showLoading) {
+        setError(err.message || 'Failed to connect to backend incident API');
+        setIncidents([]);
+        setSelectedIncidentId(null);
+        setSelectedIncidentDetail(null);
+      }
     } finally {
-      setIsLoading(false);
+      if (showLoading) {
+        setIsLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true);
+
+    const interval = setInterval(() => {
+      loadData(false);
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, []);
 
   // Fetch detailed incident & associated real events when selectedIncidentId changes

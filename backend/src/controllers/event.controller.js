@@ -1,8 +1,10 @@
 const eventService = require('../services/event.service');
+const incidentService = require('../services/incident.service');
 
 exports.createEvent = (req, res, next) => {
   try {
     const newEvent = eventService.createEvent(req.body);
+    incidentService.correlateEvents();
     
     res.status(201).json({
       status: 'success',
